@@ -1068,14 +1068,9 @@ void PerIsolateMessageListener(Local<Message> message, Local<Value> error) {
       // defer the warning to the next event loop iteration when JS execution is
       // allowed. This prevents crashes when V8 emits warnings during code
       // evaluation with throwOnSideEffect.
-      if (!env->can_call_into_js()) {
-        std::string warning_str = warning;
-        env->SetImmediate([warning_str](Environment* env) {
-          ProcessEmitWarningGeneric(env, warning_str, "V8");
-        });
-      } else {
-        USE(ProcessEmitWarningGeneric(env, warning, "V8"));
-      }
+      env->SetImmediate([warning](Environment* env) {
+        ProcessEmitWarningGeneric(env, warning, "V8");
+      });
       break;
     }
     case Isolate::MessageErrorLevel::kMessageError:
