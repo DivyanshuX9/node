@@ -107,6 +107,9 @@
     # Enable compiler warnings when using V8_DEPRECATED apis.
     'v8_deprecation_warnings%': 0,
 
+    # Check that JavaScript execution is disallowed in V8 API interrupts.
+    'v8_disallow_js_in_api_interrupts_is_checked%': 0,
+
     # Enable compiler warnings when using V8_DEPRECATE_SOON apis.
     'v8_imminent_deprecation_warnings%': 0,
 
@@ -160,6 +163,9 @@
     'v8_enable_pointer_compression%': 0,
     'v8_enable_pointer_compression_shared_cage%': 0,
     'v8_enable_31bit_smis_on_64bit_arch%': 0,
+
+    # Size of the contiguous read-only space reservation in the shared cage.
+    'v8_contiguous_compressed_ro_space_size_mb%': 16,
 
     # Sets -dV8_SHORT_BUILTIN_CALLS
     'v8_enable_short_builtin_calls%': 0,
@@ -365,7 +371,11 @@
         'defines': ['V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES'],
       }],
       ['v8_enable_pointer_compression_shared_cage==1', {
-        'defines': ['V8_COMPRESS_POINTERS_IN_SHARED_CAGE'],
+        'defines': [
+          'V8_COMPRESS_POINTERS_IN_SHARED_CAGE',
+          'V8_CONTIGUOUS_COMPRESSED_RO_SPACE',
+          'V8_CONTIGUOUS_COMPRESSED_RO_SPACE_SIZE_MB=<(v8_contiguous_compressed_ro_space_size_mb)',
+        ],
       }],
       ['v8_enable_pointer_compression==1 or v8_enable_31bit_smis_on_64bit_arch==1', {
         'defines': ['V8_31BIT_SMIS_ON_64BIT_ARCH',],
@@ -409,6 +419,9 @@
       }],
       ['v8_deprecation_warnings==1', {
         'defines': ['V8_DEPRECATION_WARNINGS',],
+      }],
+      ['v8_disallow_js_in_api_interrupts_is_checked==1', {
+        'defines': ['V8_DISALLOW_JS_IN_API_INTERRUPTS_IS_CHECKED',],
       }],
       ['v8_imminent_deprecation_warnings==1', {
         'defines': ['V8_IMMINENT_DEPRECATION_WARNINGS',],

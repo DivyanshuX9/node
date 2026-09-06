@@ -9,7 +9,7 @@
 #include "node_sea.h"
 #include "uv.h"
 #if HAVE_OPENSSL
-#include "openssl/opensslv.h"
+#include "ncrypto.h"  // Defines OPENSSL_VERSION_PREREQ for BoringSSL.
 #include "quic/guard.h"
 #endif
 
@@ -38,6 +38,8 @@ using v8::String;
 using v8::Undefined;
 using v8::Value;
 namespace node {
+
+constexpr bool kStrictOptionParsing = true;
 
 namespace per_process {
 Mutex cli_options_mutex;
@@ -83,6 +85,23 @@ void PerProcessOptions::CheckOptions(std::vector<std::string>* errors,
     errors->push_back("either --use-openssl-ca or --use-bundled-ca can be "
                       "used, not both");
   }
+
+  if (force_fips_crypto_policy != "provider" &&
+      force_fips_crypto_policy != "strict") {
+    errors->push_back(
+        "invalid value for --force-fips; expected 'provider' or 'strict'");
+  }
+
+#if defined(OPENSSL_IS_BORINGSSL) || !OPENSSL_VERSION_PREREQ(3, 4)
+  if (enable_fips_indicator_events) {
+    errors->push_back(
+        "--enable-fips-indicator-events requires OpenSSL 3.4 or later");
+  }
+
+  if (force_fips_crypto && force_fips_crypto_policy == "strict") {
+    errors->push_back("--force-fips=strict requires OpenSSL 3.4 or later");
+  }
+#endif
 
   // Any value less than 2 disables use of the secure heap.
 #ifndef V8_ENABLE_SANDBOX
@@ -222,6 +241,38 @@ void EnvironmentOptions::CheckOptions(std::vector<std::string>* errors,
   if (!trace_require_module.empty() && trace_require_module != "all" &&
       trace_require_module != "no-node-modules") {
     errors->push_back("invalid value for --trace-require-module");
+  }
+
+  if (bench_runner && test_runner) {
+    errors->push_back("either --bench or --test can be used, not both");
+  }
+
+  if (bench_runner) {
+    if (bench_isolation == "none") {
+      debug_options_.allow_attaching_debugger = true;
+    } else {
+      if (bench_isolation != "process") {
+        errors->push_back("invalid value for --bench-isolation");
+      }
+
+      debug_options_.allow_attaching_debugger = false;
+    }
+    if (has_bench_samples && bench_samples == 0) {
+      errors->push_back("--bench-samples must be greater than 0");
+    }
+    if (syntax_check_only) {
+      errors->push_back("either --bench or --check can be used, not both");
+    }
+    if (has_eval_string) {
+      errors->push_back("either --bench or --eval can be used, not both");
+    }
+    if (force_repl) {
+      errors->push_back(
+          "either --bench or --interactive can be used, not both");
+    }
+    if (watch_mode || !watch_mode_paths.empty()) {
+      errors->push_back("either --bench or --watch can be used, not both");
+    }
   }
 
   if (test_runner) {
@@ -593,7 +644,7 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
             "experimental node:ffi module",
             BOOL_FIELD(experimental_ffi),
             kAllowedInEnvvar,
-            false);
+            HAVE_FFI);
 #endif  // HAVE_FFI
   AddOption("--experimental-web-worker",
             "experimental Web Worker API",
@@ -686,6 +737,12 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
             "allow permissions to write in the filesystem",
             &EnvironmentOptions::allow_fs_write,
             kAllowedInEnvvar,
+            OptionNamespaces::kPermissionNamespace);
+  AddOption("--allow-fs-vfs",
+            "allow mounting a virtual file system when any permissions are set",
+            BOOL_FIELD(allow_fs_vfs),
+            kAllowedInEnvvar,
+            false,
             OptionNamespaces::kPermissionNamespace);
   AddOption("--allow-addons",
             "allow use of addons when any permissions are set",
@@ -928,6 +985,49 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
             "use the specified file for package map resolution",
             &EnvironmentOptions::experimental_package_map_path,
             kAllowedInEnvvar);
+  AddOption("--bench",
+            "launch benchmark runner on startup",
+            BOOL_FIELD(bench_runner),
+            kDisallowedInEnvvar,
+            false,
+            OptionNamespaces::kBenchRunnerNamespace);
+  AddOption("--bench-isolation",
+            "configures the type of benchmark isolation used in the benchmark "
+            "runner",
+            &EnvironmentOptions::bench_isolation,
+            kAllowedInEnvvar,
+            OptionNamespaces::kBenchRunnerNamespace);
+  AddOption("--bench-name-pattern",
+            "run benchmarks whose name matches this regular expression",
+            &EnvironmentOptions::bench_name_pattern,
+            kAllowedInEnvvar,
+            OptionNamespaces::kBenchRunnerNamespace);
+  AddOption("--bench-reporter",
+            "report benchmark output using the given reporter",
+            &EnvironmentOptions::bench_reporter,
+            kAllowedInEnvvar,
+            OptionNamespaces::kBenchRunnerNamespace);
+  AddOption("--bench-reporter-destination",
+            "report the given benchmark reporter to the given destination",
+            &EnvironmentOptions::bench_reporter_destination,
+            kAllowedInEnvvar,
+            OptionNamespaces::kBenchRunnerNamespace);
+  AddOption("[has_bench_samples]", "", BOOL_FIELD(has_bench_samples));
+  AddOption("--bench-samples",
+            "specify the number of measured benchmark samples",
+            &EnvironmentOptions::bench_samples,
+            kAllowedInEnvvar,
+            OptionNamespaces::kBenchRunnerNamespace,
+            kStrictOptionParsing);
+  Implies("--bench-samples", "[has_bench_samples]");
+  AddOption("[has_bench_warmup]", "", BOOL_FIELD(has_bench_warmup));
+  AddOption("--bench-warmup",
+            "specify the number of unreported benchmark warmup samples",
+            &EnvironmentOptions::bench_warmup,
+            kAllowedInEnvvar,
+            OptionNamespaces::kBenchRunnerNamespace,
+            kStrictOptionParsing);
+  Implies("--bench-warmup", "[has_bench_warmup]");
   AddOption("--test",
             "launch test runner on startup",
             BOOL_FIELD(test_runner),
@@ -1272,6 +1372,12 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
 
 PerIsolateOptionsParser::PerIsolateOptionsParser(
   const EnvironmentOptionsParser& eop) {
+  AddOption("--worker-snapshot",
+            "start worker threads from the bootstrapped context in the "
+            "built-in startup snapshot",
+            BOOL_FIELD(worker_snapshot),
+            kAllowedInEnvvar,
+            true);
   AddOption("--track-heap-objects",
             "track heap object allocations for heap snapshots",
             BOOL_FIELD(track_heap_objects),
@@ -1482,10 +1588,20 @@ PerProcessOptionsParser::PerProcessOptionsParser(
             "enable FIPS crypto at startup",
             BOOL_FIELD(enable_fips_crypto),
             kAllowedInEnvvar);
+  AddOption("--enable-fips-indicator-events",
+            "publish FIPS indicator results to the "
+            "crypto.fips.indicator diagnostics channel",
+            BOOL_FIELD(enable_fips_indicator_events),
+            kAllowedInEnvvar);
   AddOption("--force-fips",
-            "force FIPS crypto (cannot be disabled)",
+            "force FIPS crypto (optional mode: provider or strict)",
             BOOL_FIELD(force_fips_crypto),
             kAllowedInEnvvar);
+  AddOption("[force_fips_crypto_policy]",
+            "",
+            &PerProcessOptions::force_fips_crypto_policy,
+            kAllowedInEnvvar);
+  AddAlias("--force-fips=", {"[force_fips_crypto_policy]", "--force-fips"});
 #ifndef V8_ENABLE_SANDBOX
   AddOption("--secure-heap",
             "total size of the OpenSSL secure heap",
@@ -2085,6 +2201,12 @@ void GetOptionsAsFlags(const FunctionCallbackInfo<Value>& args) {
     switch (option_info.type) {
       case kBoolean: {
         bool current_value = field->GetBool(opts);
+#if HAVE_OPENSSL
+        if (option_name == "--force-fips" && current_value) {
+          flags.push_back(option_name + "=" + opts->force_fips_crypto_policy);
+          break;
+        }
+#endif
         // For boolean options with default_is_true, we want the opposite logic
         if (option_info.default_is_true) {
           if (!current_value) {

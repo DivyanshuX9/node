@@ -63,6 +63,8 @@ let
     ];
   buildInputs =
     pkgs.lib.optional useSharedICU icu
+    ++ pkgs.lib.optional (builtins.hasAttr "abseil" sharedLibDeps) sharedLibDeps.abseil
+    ++ pkgs.lib.optional (builtins.hasAttr "highway" sharedLibDeps) sharedLibDeps.highway
     ++ pkgs.lib.optional (withTemporal && useSharedTemporal) sharedLibDeps.temporal_capi;
 
   # Put here only the configure flags that affect the V8 build
@@ -75,6 +77,8 @@ let
     )
     "--v8-${if withTemporal then "enable" else "disable"}-temporal-support"
   ]
+  ++ pkgs.lib.optional (builtins.hasAttr "abseil" sharedLibDeps) "--shared-abseil"
+  ++ pkgs.lib.optional (builtins.hasAttr "highway" sharedLibDeps) "--shared-highway"
   ++ pkgs.lib.optional (withTemporal && useSharedTemporal) "--shared-temporal_capi"
   ++ pkgs.lib.optional withPerfetto "--with-perfetto";
 in
@@ -132,6 +136,8 @@ pkgs.mkShell {
             builtins.attrNames (
               if (useSeparateDerivationForV8 != false) then
                 builtins.removeAttrs sharedLibDeps [
+                  "abseil"
+                  "highway"
                   "simdutf"
                   "temporal_capi"
                 ]
@@ -141,6 +147,22 @@ pkgs.mkShell {
           )
     );
   }
+  // (
+    let
+      ruff = pkgs.lib.lists.findFirst (p: p.meta.mainProgram == "ruff") null devTools;
+    in
+    pkgs.lib.optionalAttrs (ruff != null) {
+      RUFF = pkgs.lib.getExe ruff;
+    }
+  )
+  // (
+    let
+      yamllint = pkgs.lib.lists.findFirst (p: p.meta.mainProgram == "yamllint") null devTools;
+    in
+    pkgs.lib.optionalAttrs (yamllint != null) {
+      YAMLLINT = pkgs.lib.getExe yamllint;
+    }
+  )
   // pkgs.lib.optionalAttrs (!withSQLite) {
     NOSQLITE = "1";
   }

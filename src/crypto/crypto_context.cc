@@ -1650,14 +1650,6 @@ void SecureContext::SetNewSessionCallback(NewSessionCb cb) {
   SSL_CTX_sess_set_new_cb(ctx_.get(), cb);
 }
 
-void SecureContext::SetClientHelloCallback(ClientHelloCb cb) {
-#ifdef OPENSSL_IS_BORINGSSL
-  SSL_CTX_set_select_certificate_cb(ctx_.get(), cb);
-#else
-  SSL_CTX_set_client_hello_cb(ctx_.get(), cb, nullptr);
-#endif
-}
-
 void SecureContext::SetGetSessionCallback(GetSessionCb cb) {
   SSL_CTX_sess_set_get_cb(ctx_.get(), cb);
 }
@@ -2507,9 +2499,11 @@ int SecureContext::TicketKeyCallback(SSL* ssl,
 
   ArrayBufferViewContents<unsigned char> aes_key(aes.As<ArrayBufferView>());
   if (enc) {
-    EVP_EncryptInit_ex(ectx, Cipher::AES_128_CBC, nullptr, aes_key.data(), iv);
+    EVP_EncryptInit_ex(
+        ectx, Cipher::AES_128_CBC(), nullptr, aes_key.data(), iv);
   } else {
-    EVP_DecryptInit_ex(ectx, Cipher::AES_128_CBC, nullptr, aes_key.data(), iv);
+    EVP_DecryptInit_ex(
+        ectx, Cipher::AES_128_CBC(), nullptr, aes_key.data(), iv);
   }
 
   return r;
@@ -2532,7 +2526,8 @@ int SecureContext::TicketCompatibilityCallback(SSL* ssl,
     memcpy(name, sc->ticket_key_name_, sizeof(sc->ticket_key_name_));
     if (!ncrypto::CSPRNG(iv, 16) ||
         EVP_EncryptInit_ex(
-            ectx, Cipher::AES_128_CBC, nullptr, sc->ticket_key_aes_, iv) <= 0 ||
+            ectx, Cipher::AES_128_CBC(), nullptr, sc->ticket_key_aes_, iv) <=
+            0 ||
         !InitTicketHmac(
             hctx, sc->ticket_key_hmac_, sizeof(sc->ticket_key_hmac_))) {
       return -1;
@@ -2546,7 +2541,7 @@ int SecureContext::TicketCompatibilityCallback(SSL* ssl,
   }
 
   if (EVP_DecryptInit_ex(
-          ectx, Cipher::AES_128_CBC, nullptr, sc->ticket_key_aes_, iv) <= 0 ||
+          ectx, Cipher::AES_128_CBC(), nullptr, sc->ticket_key_aes_, iv) <= 0 ||
       !InitTicketHmac(
           hctx, sc->ticket_key_hmac_, sizeof(sc->ticket_key_hmac_))) {
     return -1;

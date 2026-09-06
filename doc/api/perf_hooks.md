@@ -1091,6 +1091,54 @@ changes:
 The high resolution millisecond timestamp representing the time immediately
 before Node.js receives the first byte of the response from the server.
 
+### `performanceResourceTiming.finalResponseHeadersStart`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {number}
+
+The high resolution millisecond timestamp representing the time immediately
+after Node.js receives the first byte of the final response,
+as opposed to an interim response.
+
+### `performanceResourceTiming.firstInterimResponseStart`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {number}
+
+The high resolution millisecond timestamp representing the time immediately
+after Node.js receives the first byte of the first interim response, such as
+a `103 Early Hints` response.
+
+### `performanceResourceTiming.responseStart`
+
+<!-- YAML
+added:
+  - v18.2.0
+  - v16.17.0
+changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/65017
+    description: This property now returns `firstInterimResponseStart`
+                 when it is non-zero.
+  - version: v19.0.0
+    pr-url: https://github.com/nodejs/node/pull/44483
+    description: This property getter must be called with the
+                 `PerformanceResourceTiming` object as the receiver.
+-->
+
+* Type: {number}
+
+The high resolution millisecond timestamp representing the time immediately
+after Node.js receives the first byte of the response from the server. This
+is `firstInterimResponseStart` when it is non-zero, and
+`finalResponseHeadersStart` otherwise.
+
 ### `performanceResourceTiming.responseEnd`
 
 <!-- YAML
@@ -1165,6 +1213,37 @@ changes:
 A number representing the size (in octets) received from the fetch
 (HTTP or cache), of the message body, after removing any applied
 content-codings.
+
+### `performanceResourceTiming.renderBlockingStatus`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {string}
+
+The render blocking status of the resource. It is either `'blocking'` or `'non-blocking'`.
+
+### `performanceResourceTiming.contentType`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {string}
+
+The minimized MIME type of the content of the fetched resource, or an empty
+string if it cannot be determined.
+
+### `performanceResourceTiming.contentEncoding`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {string}
+
+The content encoding of the fetched resource, such as `'gzip'` or `'br'`.
 
 ### `performanceResourceTiming.toJSON()`
 
@@ -1639,6 +1718,34 @@ added:
 
 Returns a {RecordableHistogram}.
 
+## `perf_hooks.importHistogram(data)`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `data` {Uint8Array} A CBOR-encoded histogram previously produced by
+  [`histogram.export()`][].
+* Returns: {RecordableHistogram}
+
+Reconstructs a histogram from a CBOR-encoded `Uint8Array`. The returned
+histogram is a full {RecordableHistogram} with all bucket data, configuration,
+and EWMA state restored. New values can be recorded into it.
+
+```js
+const { createHistogram, importHistogram } = require('node:perf_hooks');
+
+const h = createHistogram();
+for (let i = 1; i <= 1000; i++) h.record(i);
+
+// Serialize and reconstruct
+const data = h.export();
+const h2 = importHistogram(data);
+
+console.log(h2.count);          // 1000
+console.log(h2.percentile(99)); // Same as h.percentile(99)
+```
+
 ## `perf_hooks.eventLoopUtilization([utilization1[, utilization2]])`
 
 <!-- YAML
@@ -1854,6 +1961,37 @@ invoked.
 added: v11.10.0
 -->
 
+### `histogram.burnRate(sloTarget)`
+
+<!-- YAML
+added: v26.8.0
+-->
+
+* `sloTarget` {number} The SLO target as a fraction between 0 and 1
+  (exclusive). For example, `0.999` for a 99.9% SLO.
+* Returns: {number}
+
+Returns the SLO burn rate: `ewmaErrorRate / (1 - sloTarget)`. A burn rate
+of 1 means the error budget will be exactly exhausted over the SLO window.
+A burn rate greater than 1 means it is being consumed faster than allowed.
+Requires the histogram to have been created with both `halfLife` and
+`threshold` options.
+
+```js
+const { createHistogram } = require('node:perf_hooks');
+
+// Track latency with a 200ms SLO threshold, half-life of 100 samples
+const h = createHistogram({ halfLife: 100, threshold: 200_000_000 });
+
+// ... record latency values ...
+
+// Check burn rate against a 99.9% SLO
+const rate = h.burnRate(0.999);
+if (rate > 1) {
+  console.log(`SLO burn rate: ${rate.toFixed(2)}x — error budget depleting`);
+}
+```
+
 ### `histogram.count`
 
 <!-- YAML
@@ -1881,7 +2019,7 @@ The number of samples recorded by the histogram.
 ### `histogram.ccdf(value)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `value` {number} The value to query.
@@ -1894,7 +2032,7 @@ will exceed `value`. Equivalent to `1 - histogram.cdf(value)`.
 ### `histogram.cdf(value)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `value` {number} The value to query.
@@ -1908,7 +2046,7 @@ than or equal to `value`. This is the inverse operation of
 ### `histogram.cliffsD(other)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `other` {Histogram} The histogram to compare against.
@@ -1923,7 +2061,7 @@ opposite; 0 means no tendency in either direction.
 ### `histogram.cohensD(other)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `other` {Histogram} The histogram to compare against.
@@ -1938,7 +2076,7 @@ Both histograms must have at least 2 recorded values; otherwise returns 0.
 ### `histogram.countAt(value)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `value` {number} The value to query.
@@ -1971,10 +2109,47 @@ added:
 The number of times the event loop delay exceeded the maximum 1 hour event
 loop delay threshold.
 
-### `histogram.ewmaMean`
+### `histogram.export()`
 
 <!-- YAML
 added: REPLACEME
+-->
+
+* Returns: {Uint8Array}
+
+Serializes the histogram to a [CBOR][]-encoded (RFC 8949) `Uint8Array`
+suitable for transmission or persistent storage. The encoding uses a
+delta-encoded sparse representation of the bucket counts, so the output size
+scales with the number of distinct recorded values rather than the total
+bucket count.
+
+The output includes all histogram configuration, bucket data, and EWMA
+state (when enabled). It can be reconstructed into a new histogram using
+[`perf_hooks.importHistogram()`][].
+
+The CBOR payload is a map with integer keys:
+
+| Key | Type    | Field                                         |
+| --- | ------- | --------------------------------------------- |
+| 0   | uint    | Format version (currently 1)                  |
+| 1   | uint    | Lowest discernible value                      |
+| 2   | uint    | Highest trackable value                       |
+| 3   | uint    | Significant figures                           |
+| 4   | uint    | Total count                                   |
+| 5   | uint    | Min value                                     |
+| 6   | uint    | Max value                                     |
+| 7   | uint    | Normalizing index offset                      |
+| 8   | float64 | Conversion ratio                              |
+| 9   | uint    | Counts array length                           |
+| 10  | array   | Delta-encoded sparse counts `[delta, c, ...]` |
+| 11  | map     | EWMA state (omitted when disabled)            |
+
+Any standard CBOR decoder can parse the output.
+
+### `histogram.ewmaMean`
+
+<!-- YAML
+added: v26.8.0
 -->
 
 * Type: {number}
@@ -1986,7 +2161,7 @@ Returns `0` when EWMA is disabled or no values have been recorded.
 ### `histogram.ewmaStddev`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * Type: {number}
@@ -1998,7 +2173,7 @@ when EWMA is disabled or no values have been recorded.
 ### `histogram.ewmaErrorRate`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * Type: {number}
@@ -2008,41 +2183,10 @@ The EWMA-smoothed probability of a recorded value exceeding the configured
 and `threshold` options. Returns `0` when not enabled or no values have been
 recorded.
 
-### `histogram.burnRate(sloTarget)`
-
-<!-- YAML
-added: REPLACEME
--->
-
-* `sloTarget` {number} The SLO target as a fraction between 0 and 1
-  (exclusive). For example, `0.999` for a 99.9% SLO.
-* Returns: {number}
-
-Returns the SLO burn rate: `ewmaErrorRate / (1 - sloTarget)`. A burn rate
-of 1 means the error budget will be exactly exhausted over the SLO window.
-A burn rate greater than 1 means it is being consumed faster than allowed.
-Requires the histogram to have been created with both `halfLife` and
-`threshold` options.
-
-```js
-const { createHistogram } = require('node:perf_hooks');
-
-// Track latency with a 200ms SLO threshold, half-life of 100 samples
-const h = createHistogram({ halfLife: 100, threshold: 200_000_000 });
-
-// ... record latency values ...
-
-// Check burn rate against a 99.9% SLO
-const rate = h.burnRate(0.999);
-if (rate > 1) {
-  console.log(`SLO burn rate: ${rate.toFixed(2)}x — error budget depleting`);
-}
-```
-
 ### `histogram.ksTest(other)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `other` {Histogram} The histogram to compare against.
@@ -2056,7 +2200,7 @@ detecting performance regressions by comparing before/after histograms.
 ### `histogram.kurtosis`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * Type: {number}
@@ -2069,7 +2213,7 @@ lighter tails.
 ### `histogram.linearBuckets(stepSize)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `stepSize` {number} The width of each linear bucket.
@@ -2081,7 +2225,7 @@ of `stepSize`. Useful for visualization and export.
 ### `histogram.logBuckets(firstBucket, base)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `firstBucket` {number} The value of the first bucket boundary.
@@ -2095,7 +2239,7 @@ Useful for visualization and export.
 ### `histogram.mannWhitneyTest(other)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `other` {Histogram} The histogram to compare against.
@@ -2141,6 +2285,41 @@ added: v11.10.0
 * Type: {number}
 
 The mean of the recorded event loop delays.
+
+### `histogram.meanCI([options])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `options` {Object}
+  * `confidence` {number} The confidence level for the interval, between
+    0 and 1 (exclusive). **Default:** `0.95`.
+* Returns: {Object}
+  * `mean` {number} The mean estimate, equivalent to `histogram.mean`.
+  * `lower` {number} The lower bound of the confidence interval.
+  * `upper` {number} The upper bound of the confidence interval.
+
+Returns a two-sided confidence interval for the mean using Student's
+t-distribution and the sample standard error. A higher confidence level
+produces a wider interval. This interval assumes that samples are independent
+and approximately normally distributed, although the approximation is robust
+for sufficiently large samples.
+
+The result reflects the histogram's configured precision and is calculated
+from the values represented by its buckets. With fewer than two recorded
+values, `lower` and `upper` are `NaN`. When all recorded values are equal,
+`lower` and `upper` equal `mean`.
+
+```js
+const { createHistogram } = require('node:perf_hooks');
+
+const h = createHistogram();
+for (let i = 1; i <= 100; i++) h.record(i);
+
+const { mean, lower, upper } = h.meanCI();
+console.log(`mean=${mean}, 95% CI=[${lower}, ${upper}]`);
+```
 
 ### `histogram.min`
 
@@ -2191,7 +2370,7 @@ Returns the value at the given percentile.
 ### `histogram.percentileCI(percentile[, options])`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `percentile` {number} A percentile value in the range (0, 100].
@@ -2247,7 +2426,7 @@ Returns a `Map` object detailing the accumulated percentile distribution.
 ### `histogram.percentilesAt(percentiles)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `percentiles` {number\[]} An array of percentile values in the range (0, 100].
@@ -2269,7 +2448,7 @@ Resets the collected histogram data.
 ### `histogram.skewness`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * Type: {number}
@@ -2292,7 +2471,7 @@ The standard deviation of the recorded event loop delays.
 ### `histogram.welchTest(other[, options])`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `other` {Histogram} The histogram to compare against.
@@ -2408,7 +2587,7 @@ previous call to `recordDelta()` and records that amount in the histogram.
 ### `histogram.recordCorrected(val, expectedInterval)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `val` {number|bigint} The value to record.
@@ -2423,7 +2602,7 @@ latency.
 ### `histogram.subtract(other)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.8.0
 -->
 
 * `other` {RecordableHistogram}
@@ -2846,6 +3025,7 @@ dns.promises.resolve('localhost');
 ```
 
 [Async Hooks]: async_hooks.md
+[CBOR]: https://www.rfc-editor.org/rfc/rfc8949
 [Cliff's delta]: https://en.wikipedia.org/wiki/Effect_size#Cliff's_delta
 [Cohen's d]: https://en.wikipedia.org/wiki/Effect_size#Cohen's_d
 [Fetch Response Body Info]: https://fetch.spec.whatwg.org/#response-body-info
@@ -2860,7 +3040,9 @@ dns.promises.resolve('localhost');
 [Worker threads]: worker_threads.md#worker-threads
 [`'exit'`]: process.md#event-exit
 [`child_process.spawnSync()`]: child_process.md#child_processspawnsynccommand-args-options
+[`histogram.export()`]: #histogramexport
 [`perf_hooks.eventLoopUtilization()`]: #perf_hookseventlooputilizationutilization1-utilization2
+[`perf_hooks.importHistogram()`]: #perf_hooksimporthistogramdata
 [`perf_hooks.monitorEventLoopDelay()`]: #perf_hooksmonitoreventloopdelayoptions
 [`perf_hooks.timerify()`]: #perf_hookstimerifyfn-options
 [`process.hrtime()`]: process.md#processhrtimetime

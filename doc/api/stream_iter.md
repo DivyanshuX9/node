@@ -1,6 +1,6 @@
 # Iterable Streams
 
-<!--introduced_in=v25.9.0-->
+<!--introduced_in=v24.20.0-->
 
 > Stability: 1 - Experimental – Enable this API with the [`--experimental-stream-iter`][] CLI flag.
 
@@ -401,6 +401,12 @@ const { writer, readable } = push({
 A writer is any object conforming to the Writer interface. Only `write()` is
 required; all other methods are optional.
 
+Writer arguments use Web IDL conversion semantics. A non-`Uint8Array` chunk is
+converted to a `USVString` and then UTF-8 encoded. `writev()` and
+`writevSync()` accept any iterable object whose values can be converted to
+chunks. Writer option dictionaries treat `null` as an empty dictionary and
+ignore unknown members.
+
 Each async method has a synchronous `*Sync` counterpart designed for a
 try-fallback pattern: attempt the fast synchronous path first, and fall back
 to the async version only when the synchronous call indicates it could not
@@ -417,9 +423,13 @@ writer.fail(err);  // Always synchronous, no fallback needed
 
 * {boolean|null}
 
-Returns `true` if the next write is likely to be accepted (buffered data is
-below capacity), `false` if backpressure is active, or `null` if the writer
-is closed or the consumer has disconnected.
+Returns `true` if the slots buffer has physical capacity (buffered data is
+below the configured byte budget), `false` if the budget is exhausted, or
+`null` if the writer is closed or the consumer has disconnected.
+
+This reports physical capacity independently of the backpressure policy. With
+`'drop-oldest'` or `'drop-newest'`, writes still complete when this is `false`
+by evicting buffered data or discarding the incoming data, respectively.
 
 This is a hint, not a guarantee: the state can change between the check and
 the write. Use [`ondrain()`][] to wait for capacity rather than polling.
@@ -431,7 +441,11 @@ the write. Use [`ondrain()`][] to wait for capacity rather than polling.
     the pending `end()` call; it does not fail the writer itself.
 * Returns: {Promise} Fulfills with the total number of bytes written.
 
-Signals that no more data will be written and waits for buffered data to drain.
+Signals that no more data will be written. Writes already waiting for buffer
+space remain ordered before the end of the stream, while later writes fail. If
+data is outstanding, the returned promise fulfills after the consumer pulls
+`done: true` beyond the final batch. If no data is buffered or pending, the
+writer closes immediately.
 
 #### `writer.endSync()`
 
@@ -458,6 +472,12 @@ or errored, this is a no-op. Unlike `write()` and `end()`, `fail()` is
 unconditionally synchronous because failing a writer is a pure state
 transition with no async work to perform.
 
+#### `writer[Symbol.asyncDispose]()`
+
+If the writer is open, calls `writer.fail()`. If the writer is closing after
+`end()` or `endSync()`, waits for buffered data to drain. If the writer is
+already closed or errored, resolves immediately.
+
 #### `writer.write(chunk[, options])`
 
 * `chunk` {Uint8Array|string}
@@ -478,7 +498,7 @@ Synchronous write. Does not block; returns `false` if backpressure is active.
 
 #### `writer.writev(chunks[, options])`
 
-* `chunks` {Uint8Array\[]|string\[]}
+* `chunks` {Iterable} of {Uint8Array|string} values
 * `options` {Object}
   * `signal` {AbortSignal} Cancel just this write operation. The signal cancels
     only the pending `writev()` call; it does not fail the writer itself.
@@ -488,7 +508,7 @@ Write multiple chunks as a single batch.
 
 #### `writer.writevSync(chunks)`
 
-* `chunks` {Uint8Array\[]|string\[]}
+* `chunks` {Iterable} of {Uint8Array|string} values
 * Returns: {boolean} `true` if the write was accepted, `false` if the
   buffer is full.
 
@@ -507,6 +527,12 @@ import { from, pull, bytes, Stream } from 'node:stream/iter';
 Stream.from('hello');
 ```
 
+Options dictionaries defined by the Iterable Streams API use Web IDL
+conversion semantics. `null` is treated as an empty dictionary, unknown
+members are ignored, and known members are converted to their declared types
+before the operation runs. Conversion failures use Node.js error codes such as
+`ERR_INVALID_ARG_TYPE`, `ERR_INVALID_ARG_VALUE`, and `ERR_OUT_OF_RANGE`.
+
 ```cjs
 // Named exports
 const { from, pull, bytes, Stream } = require('node:stream/iter');
@@ -524,6 +550,7 @@ Including the `node:` prefix on the module specifier is optional.
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `input` {string|ArrayBuffer|ArrayBufferView|Iterable|AsyncIterable|Object}
@@ -532,7 +559,8 @@ added:
 
 Create an async byte stream from the given input. Strings are UTF-8 encoded.
 `ArrayBuffer` and `ArrayBufferView` values are wrapped as `Uint8Array`. Arrays
-and iterables in `input` are recursively flattened and normalized.
+and iterables in `input` are recursively flattened and normalized. Flattened
+values may be split across implementation-defined bounded batches.
 
 Objects implementing `Symbol.for('Stream.toAsyncStreamable')` or
 `Symbol.for('Stream.toStreamable')` are converted via those protocols. The
@@ -565,6 +593,7 @@ run().catch(console.error);
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `input` {string|ArrayBuffer|ArrayBufferView|Iterable|Object}
@@ -596,13 +625,15 @@ console.log(textSync(fromSync('hello'))); // 'hello'
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {AsyncIterable|Iterable} The data source.
 * `...transforms` {Function|Object} Zero or more transforms to apply.
 * `writer` {Object} Destination with `write(chunk)` method.
 * `options` {Object}
-  * `signal` {AbortSignal} Abort the pipeline.
+  * `signal` {AbortSignal} Abort the pipeline. Aborting fails the destination
+    writer unless `preventFail` is `true`.
   * `preventClose` {boolean} If `true`, do not call `writer.end()` when
     the source ends. **Default:** `false`.
   * `preventFail` {boolean} If `true`, do not call `writer.fail()` on
@@ -654,6 +685,7 @@ run().catch(console.error);
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {Iterable} The sync data source.
@@ -675,6 +707,7 @@ The `writer` must have the `*Sync` methods (`writeSync`, `writevSync`,
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {AsyncIterable|Iterable} The data source.
@@ -683,8 +716,10 @@ added:
   * `signal` {AbortSignal} Abort the pipeline.
 * Returns: {AsyncIterable} whose chunks fulfill with {Uint8Array\[]}
 
-Create a lazy async pipeline. Data is not read from `source` until the
-returned iterable is consumed. Transforms are applied in order.
+Create a lazy async pipeline. Source conversion and streamable protocol
+dispatch occur when `pull()` is called, but data is not read from `source`
+until the returned iterable is consumed. A signal that is already aborted is
+thrown synchronously after source conversion. Transforms are applied in order.
 
 ```mjs
 import { from, pull, text } from 'node:stream/iter';
@@ -747,13 +782,15 @@ ac.abort(); // Pipeline throws AbortError on next iteration
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {Iterable} The sync data source.
 * `...transforms` {Function|Object} Zero or more sync transforms.
 * Returns: {Iterable} whose chunks return {Uint8Array\[]}
 
-Synchronous version of [`pull()`][]. All transforms must be synchronous.
+Synchronous version of [`pull()`][]. Source conversion and streamable protocol
+dispatch occur when `pullSync()` is called. All transforms must be synchronous.
 
 ## Push streams
 
@@ -762,6 +799,7 @@ Synchronous version of [`pull()`][]. All transforms must be synchronous.
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `...transforms` {Function|Object} Optional transforms applied to the
@@ -772,7 +810,9 @@ added:
     **Default:** `16384`.
   * `backpressure` {string} Backpressure policy: `'strict'`, `'unbounded'`,
     `'drop-oldest'`, or `'drop-newest'`. **Default:** `'strict'`.
-  * `signal` {AbortSignal} Abort the stream.
+  * `signal` {AbortSignal} Abort the stream. The signal remains active while
+    buffered data drains after `writer.end()`; aborting during that time fails
+    the writer and rejects the pending `end()` promise.
 * Returns: {Object}
   * `writer` {Writable} The writer side.
   * `readable` {AsyncIterable} whose chunks fulfill with {Uint8Array\[]}
@@ -827,11 +867,12 @@ The writer returned by `push()` conforms to the \[Writer interface]\[].
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `options` {Object}
   * `budget` {number} Buffer size in bytes for both directions.
-    **Default:** `16384`.
+    Must be >= 16384. **Default:** `16384`.
   * `backpressure` {string} Policy for both directions.
     **Default:** `'strict'`.
   * `signal` {AbortSignal} Cancellation signal for both channels.
@@ -905,6 +946,7 @@ run().catch(console.error);
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {AsyncIterable|Iterable} whose chunks must be {Uint8Array\[]}
@@ -921,6 +963,7 @@ Collect all chunks as an array of `Uint8Array` values (without concatenating).
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {AsyncIterable|Iterable} whose chunks must be {Uint8Array\[]}
@@ -937,6 +980,7 @@ Collect all bytes into an `ArrayBuffer`.
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {Iterable} whose chunks must be {Uint8Array\[]}
@@ -952,6 +996,7 @@ Synchronous version of [`arrayBuffer()`][].
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {Iterable} whose chunks must be {Uint8Array\[]}
@@ -967,6 +1012,7 @@ Synchronous version of [`array()`][].
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {AsyncIterable|Iterable} whose chunks must be {Uint8Array\[]}
@@ -1001,6 +1047,7 @@ run().catch(console.error);
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {Iterable} whose chunks must be {Uint8Array\[]}
@@ -1016,6 +1063,7 @@ Synchronous version of [`bytes()`][].
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {AsyncIterable|Iterable} whose chunks must be {Uint8Array\[]}
@@ -1049,6 +1097,7 @@ run().catch(console.error);
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {Iterable} whose chunks must be {Uint8Array\[]}
@@ -1067,14 +1116,19 @@ Synchronous version of [`text()`][].
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `drainable` {Object} An object implementing the drainable protocol.
 * Returns: {Promise|null}
 
-Wait for a drainable writer's backpressure to clear. Returns `null` if
-the object does not implement the drainable protocol, or a promise that
-fulfills with `true` when the writer can accept more data.
+Wait for a drainable writer to regain physical buffer capacity. Returns `null`
+if the object does not implement the drainable protocol, or a promise that
+fulfills with `true` when buffered data falls below the byte budget.
+
+For writers using `'drop-oldest'` or `'drop-newest'`, this waits for physical
+capacity even though writes do not block. This allows producers to avoid data
+loss by waiting before writing.
 
 ```mjs
 import { push, ondrain, text } from 'node:stream/iter';
@@ -1125,6 +1179,7 @@ run().catch(console.error);
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `...sources` {AsyncIterable|Iterable} whose chunks must be {Uint8Array\[]}
@@ -1159,6 +1214,7 @@ run().catch(console.error);
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `callback` {Function} `(chunks) => void` Called with each batch.
@@ -1199,6 +1255,7 @@ chunks by the tapping callback; but return values are ignored.
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `callback` {Function}
@@ -1213,6 +1270,7 @@ Synchronous version of [`tap()`][].
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `options` {Object}
@@ -1309,6 +1367,7 @@ Alias for `broadcast.cancel()`.
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `input` {AsyncIterable|Iterable|BroadcastChannel}
@@ -1323,6 +1382,7 @@ automatically and pushed to all subscribers.
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {AsyncIterable} The source to share.
@@ -1331,6 +1391,7 @@ added:
     **Default:** `65536`.
   * `backpressure` {string} `'strict'`, `'unbounded'`, `'drop-oldest'`, or
     `'drop-newest'`. **Default:** `'strict'`.
+  * `signal` {AbortSignal}
 * Returns: {Share}
 
 Create a pull-model multi-consumer shared stream. Unlike `broadcast()`, the
@@ -1426,6 +1487,7 @@ Alias for `share.cancel()`.
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `source` {Iterable} The sync source to share.
@@ -1444,6 +1506,7 @@ Synchronous version of [`share()`][].
 <!-- YAML
 added:
  - v25.9.0
+ - v24.20.0
 -->
 
 * `input` {Iterable|SyncShareable}
@@ -1500,7 +1563,9 @@ directly. The minimum contract is described below for each function.
 ### `fromReadable(readable)`
 
 <!-- YAML
-added: v26.1.0
+added:
+ - v26.1.0
+ - v24.20.0
 -->
 
 > Stability: 1 - Experimental
@@ -1554,7 +1619,9 @@ run();
 ### `fromWritable(writable[, options])`
 
 <!-- YAML
-added: v26.1.0
+added:
+ - v26.1.0
+ - v24.20.0
 -->
 
 > Stability: 1 - Experimental
@@ -1619,7 +1686,9 @@ run();
 ### `toReadable(source[, options])`
 
 <!-- YAML
-added: v26.1.0
+added:
+ - v26.1.0
+ - v24.20.0
 -->
 
 > Stability: 1 - Experimental
@@ -1661,7 +1730,9 @@ readable.pipe(createWriteStream('output.gz'));
 ### `toReadableSync(source[, options])`
 
 <!-- YAML
-added: v26.1.0
+added:
+ - v26.1.0
+ - v24.20.0
 -->
 
 > Stability: 1 - Experimental
@@ -1698,7 +1769,9 @@ console.log(readable.read().toString()); // 'hello world'
 ### `toWritable(writer)`
 
 <!-- YAML
-added: v26.1.0
+added:
+ - v26.1.0
+ - v24.20.0
 -->
 
 > Stability: 1 - Experimental

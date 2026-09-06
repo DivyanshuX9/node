@@ -282,6 +282,28 @@ parser.add_argument('--openssl-system-ca-path',
     help='Use the specified path to system CA (PEM format) in addition to '
          'the OpenSSL supplied CA store or compiled-in Mozilla CA copy.')
 
+shared_optgroup.add_argument('--shared-abseil',
+    action='store_true',
+    dest='shared_abseil',
+    default=None,
+    help='link to a shared Abseil DLL instead of static linking')
+
+shared_optgroup.add_argument('--shared-abseil-includes',
+    action='store',
+    dest='shared_abseil_includes',
+    help='directory containing Abseil header files')
+
+shared_optgroup.add_argument('--shared-abseil-libname',
+    action='store',
+    dest='shared_abseil_libname',
+    default=None,
+    help='alternative lib name to link to [default: %(default)s]')
+
+shared_optgroup.add_argument('--shared-abseil-libpath',
+    action='store',
+    dest='shared_abseil_libpath',
+    help='a directory to search for the shared Abseil DLL')
+
 shared_optgroup.add_argument('--shared-gtest',
     action='store_true',
     dest='shared_gtest',
@@ -326,11 +348,27 @@ shared_optgroup.add_argument('--shared-hdr-histogram-libpath',
     dest='shared_hdr_histogram_libpath',
     help='a directory to search for the shared HdrHistogram DLL')
 
-parser.add_argument('--experimental-http-parser',
+shared_optgroup.add_argument('--shared-highway',
     action='store_true',
-    dest='experimental_http_parser',
+    dest='shared_highway',
     default=None,
-    help='(no-op)')
+    help='link to a shared Highway (hwy) DLL instead of static linking')
+
+shared_optgroup.add_argument('--shared-highway-includes',
+    action='store',
+    dest='shared_highway_includes',
+    help='directory containing Highway header files')
+
+shared_optgroup.add_argument('--shared-highway-libname',
+    action='store',
+    dest='shared_highway_libname',
+    default='hwy',
+    help='alternative lib name to link to [default: %(default)s]')
+
+shared_optgroup.add_argument('--shared-highway-libpath',
+    action='store',
+    dest='shared_highway_libpath',
+    help='a directory to search for the shared Highway DLL')
 
 shared_optgroup.add_argument('--shared-http-parser',
     action='store_true',
@@ -1022,32 +1060,11 @@ parser.add_argument('--control-flow-guard',
     default=None,
     help='enable Control Flow Guard (CFG)')
 
-# Dummy option for backwards compatibility
-parser.add_argument('--without-report',
-    action='store_true',
-    dest='unused_without_report',
-    default=None,
-    help=argparse.SUPPRESS)
-
-parser.add_argument('--with-snapshot',
-    action='store_true',
-    dest='unused_with_snapshot',
-    default=None,
-    help=argparse.SUPPRESS)
-
-parser.add_argument('--without-snapshot',
-    action='store_true',
-    dest='unused_without_snapshot',
-    default=None,
-    help=argparse.SUPPRESS)
-
 parser.add_argument('--without-siphash',
     action='store_true',
     dest='without_siphash',
     default=None,
     help=argparse.SUPPRESS)
-
-# End dummy list.
 
 parser.add_argument('--without-ssl',
     action='store_true',
@@ -1906,8 +1923,6 @@ def configure_node(o):
                      else target_arch != host_arch)
   if cross_compiling:
     os.environ['GYP_CROSSCOMPILE'] = "1"
-  if options.unused_without_snapshot:
-    warn('building --without-snapshot is no longer possible')
 
   o['variables']['want_separate_host_toolset'] = int(cross_compiling)
 
@@ -2843,6 +2858,71 @@ configure_napi(output)
 configure_library('zlib', output)
 configure_library('http_parser', output, pkgname='libllhttp')
 configure_library('libuv', output)
+configure_library('abseil', output, pkgname=[
+  'absl_absl_check',
+  'absl_absl_log',
+  'absl_absl_vlog_is_on',
+  'absl_algorithm_container',
+  'absl_algorithm',
+  'absl_any_invocable',
+  'absl_base',
+  'absl_bind_front',
+  'absl_bits',
+  'absl_btree',
+  'absl_charset',
+  'absl_cleanup',
+  'absl_config',
+  'absl_cord',
+  'absl_core_headers',
+  'absl_die_if_null',
+  'absl_dynamic_annotations',
+  'absl_failure_signal_handler',
+  'absl_fast_type_id',
+  'absl_fixed_array',
+  'absl_flat_hash_map',
+  'absl_flat_hash_set',
+  'absl_function_ref',
+  'absl_has_ostream_operator',
+  'absl_hash_container_defaults',
+  'absl_hash',
+  'absl_inlined_vector',
+  'absl_int128',
+  'absl_layout',
+  'absl_leak_check',
+  'absl_linked_hash_map',
+  'absl_linked_hash_set',
+  'absl_log_entry',
+  'absl_log_globals',
+  'absl_log_initialize',
+  'absl_log_severity',
+  'absl_log_sink_registry',
+  'absl_log_sink',
+  'absl_memory',
+  'absl_no_destructor',
+  'absl_node_hash_map',
+  'absl_node_hash_set',
+  'absl_nullability',
+  'absl_optional',
+  'absl_overload',
+  'absl_prefetch',
+  'absl_random_bit_gen_ref',
+  'absl_random_distributions',
+  'absl_random_random',
+  'absl_raw_logging_internal',
+  'absl_span',
+  'absl_stacktrace',
+  'absl_status',
+  'absl_statusor',
+  'absl_str_format',
+  'absl_string_view',
+  'absl_strings',
+  'absl_symbolize',
+  'absl_synchronization',
+  'absl_time',
+  'absl_type_traits',
+  'absl_utility',
+  'absl_variant',
+])
 configure_library('ada', output)
 configure_library('simdjson', output)
 configure_library('simdutf', output)
@@ -2850,6 +2930,7 @@ configure_library('brotli', output, pkgname=['libbrotlidec', 'libbrotlienc'])
 configure_library('cares', output, pkgname='libcares')
 configure_library('gtest', output)
 configure_library('hdr_histogram', output)
+configure_library('highway', output, pkgname='libhwy')
 configure_library('merve', output)
 configure_library('nbytes', output)
 configure_library('nghttp2', output, pkgname='libnghttp2')
